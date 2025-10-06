@@ -1,0 +1,10 @@
+backbone: vit_base_patch16_224
+num_classes: 10
+img_size: 224
+batch: 32
+epochs: 40
+lr: 3e-4
+fp16: true
+train_dir: ./data/train
+val_dir: ./data/val
+out: ./experiments/cls_best.pth
