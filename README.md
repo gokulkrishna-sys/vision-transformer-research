@@ -19,49 +19,41 @@ This repository is designed for:
 ## Repository Structure
 
 ```
-VisionTransformerResearch/
-│
-├── configs/                     # YAML configuration files for each task
-│   ├── cls_vit_base.yaml        # Classification experiment config
-│   ├── det_vit_fpn.yaml         # Object detection experiment config
-│   └── seg_vit.yaml             # Semantic segmentation experiment config
-│
-├── data/                        # Placeholder for datasets (path configurable)
-│
-├── models/                      # Model definitions
-│   ├── classification_head.py   # Task-specific classification head
-│   ├── detection_head.py        # Task-specific detection head
-│   ├── segmentation_head.py     # Task-specific segmentation head
-│   ├── model_builder.py         # Dynamically builds models from configs
-│   └── __init__.py
-│
-├── train/                       # Training scripts for each task
-│   ├── train_classification.py  # Train ViT for classification
-│   ├── train_detection.py       # Train ViT for object detection
-│   └── train_segmentation.py    # Train ViT for segmentation
-│
-├── utils/                       # Helper utilities
-│   ├── datasets.py              # Dataset loading (ImageFolder, COCO, VOC)
-│   ├── transforms.py            # Preprocessing and augmentation
-│   ├── engine.py                # Training/validation loops
-│   ├── metrics.py               # Evaluation metrics (accuracy, mAP, IoU)
-│   └── logger.py                # TensorBoard and checkpoint handling
-│
-├── experiments/                 # All logs, checkpoints, and outputs
-│
-├── requirements.txt
-├── README.md
-└── main.py                      # Entry point for launching any task
-```
-
----
+vision-transformer-research/
+├─ README.md
+├─ requirements.txt
+├─ configs/
+│  ├─ cls_resnet50.yaml
+│  ├─ det_vit_fpn.yaml
+│  └─ seg_vit.yaml
+├─ datasets/
+│  ├─ __init__.py
+│  ├─ classification_dataset.py
+│  ├─ detection_dataset.py   # COCO / Pascal-style wrapper
+│  └─ segmentation_dataset.py   
+├─ models/
+│  ├─ __init__.py
+│  ├─ backbones.py           # wrappers around timm models -> features_only
+│  ├─ classification.py      # classification head + model builder
+│  ├─ detection.py           # wrapper to create torchvision detection model with timm backbone
+│  └─ segmentation.py        # wrapper to create torchvision segmentation model with timm 
+├─ utils/
+│  ├─ transforms.py
+│  ├─ train_utils.py
+│  └─ metrics.py
+├─ train/
+│  ├─ train_classification.py
+│  ├─ train_detection.py
+│  └─ train_segmentation.py
+└─ experiments/
+   └─ logs, checkpoints, tensorboard
 
 ## Installation
 
 ```bash
 # Clone the repo
-git clone https://github.com/<your-username>/VisionTransformerResearch.git
-cd VisionTransformerResearch
+git clone https://github.com/gokulkrishna-sys/vision-transformer-research.git
+cd vision-transformer-research
 
 # Create and activate virtual environment
 conda create -n vit_research python=3.10 -y
