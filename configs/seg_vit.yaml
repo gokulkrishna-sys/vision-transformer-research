@@ -1,0 +1,31 @@
+# configs/seg_vit.yaml
+
+task: segmentation
+experiment_name: vit_seg
+
+# Dataset
+train_images: ./data/voc/images/train/
+train_masks: ./data/voc/masks/train/
+val_images: ./data/voc/images/val/
+val_masks: ./data/voc/masks/val/
+num_classes: 21  # Pascal VOC
+
+# Model
+encoder_name: mit_b2
+encoder_out_index: -1
+pretrained: true
+
+# Training
+img_size: 512
+batch_size: 8
+epochs: 40
+lr: 1e-4
+weight_decay: 1e-4
+optimizer: adamw
+fp16: true
+device: cuda
+
+# Logging & Checkpoints
+save_dir: ./experiments/seg_vit/
+eval_interval: 1
+save_best: true
