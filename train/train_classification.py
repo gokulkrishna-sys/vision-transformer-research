@@ -1,51 +1,108 @@
 # train/train_classification.py
 import argparse
+import yaml
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from models.classification import ClassificationModel
-from datasets.classification_dataset import build_classification_datasets
-from utils.train_utils import train_one_epoch, evaluate
-from torch.cuda.amp import GradScaler
+from torchvision import datasets, transforms
+from timm import create_model
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--train_dir', required=True)
-    parser.add_argument('--val_dir', required=True)
-    parser.add_argument('--backbone', default='vit_base_patch16_224')
-    parser.add_argument('--img_size', type=int, default=224)
-    parser.add_argument('--batch', type=int, default=32)
-    parser.add_argument('--epochs', type=int, default=30)
-    parser.add_argument('--lr', type=float, default=3e-4)
-    parser.add_argument('--num_classes', type=int, default=1000)
-    parser.add_argument('--fp16', action='store_true')
-    parser.add_argument('--device', default='cuda')
-    parser.add_argument('--out', default='checkpoints/cls.pth')
-    args = parser.parse_args()
 
-    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+def load_config(config_path):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
 
-    train_ds, val_ds = build_classification_datasets(args.train_dir, args.val_dir, img_size=args.img_size)
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=8, pin_memory=True)
 
-    model = ClassificationModel(backbone_name=args.backbone, num_classes=args.num_classes, pretrained=True)
-    model = model.to(device)
+def get_dataloaders(cfg):
+    transform_train = transforms.Compose([
+        transforms.Resize((cfg["img_size"], cfg["img_size"])),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ])
+    transform_val = transforms.Compose([
+        transforms.Resize((cfg["img_size"], cfg["img_size"])),
+        transforms.ToTensor(),
+    ])
+    train_dataset = datasets.ImageFolder(cfg["train_dir"], transform=transform_train)
+    val_dataset = datasets.ImageFolder(cfg["val_dir"], transform=transform_val)
+
+    train_loader = DataLoader(train_dataset, batch_size=cfg["batch_size"], shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=cfg["batch_size"], shuffle=False, num_workers=4)
+    return train_loader, val_loader
+
+
+def train_one_epoch(model, loader, criterion, optimizer, device):
+    model.train()
+    total_loss, correct, total = 0, 0, 0
+    for imgs, labels in tqdm(loader, desc="Training"):
+        imgs, labels = imgs.to(device), labels.to(device)
+        optimizer.zero_grad()
+        outputs = model(imgs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() * imgs.size(0)
+        _, preds = outputs.max(1)
+        correct += preds.eq(labels).sum().item()
+        total += labels.size(0)
+    return total_loss / total, correct / total
+
+
+def validate(model, loader, criterion, device):
+    model.eval()
+    total_loss, correct, total = 0, 0, 0
+    with torch.no_grad():
+        for imgs, labels in tqdm(loader, desc="Validation"):
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item() * imgs.size(0)
+            _, preds = outputs.max(1)
+            correct += preds.eq(labels).sum().item()
+            total += labels.size(0)
+    return total_loss / total, correct / total
+
+
+def main(cfg):
+    os.makedirs(cfg["save_dir"], exist_ok=True)
+    writer = SummaryWriter(log_dir=os.path.join(cfg["save_dir"], "runs"))
+
+    device = torch.device(cfg["device"] if torch.cuda.is_available() else "cpu")
+
+    train_loader, val_loader = get_dataloaders(cfg)
+
+    model = create_model(cfg["backbone"], pretrained=cfg["pretrained"], num_classes=cfg["num_classes"])
+    model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scaler = GradScaler() if args.fp16 else None
+    optimizer = optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     best_acc = 0.0
-    for epoch in range(1, args.epochs+1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler=scaler)
-        val_loss, val_acc = evaluate(model, val_loader, criterion, device)
-        print(f"Epoch {epoch}: train_loss={train_loss:.4f} train_acc={train_acc:.4f} val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
-        if val_acc > best_acc:
+    for epoch in range(cfg["epochs"]):
+        print(f"\nEpoch {epoch + 1}/{cfg['epochs']}")
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_acc = validate(model, val_loader, criterion, device)
+
+        writer.add_scalars("Loss", {"train": train_loss, "val": val_loss}, epoch)
+        writer.add_scalars("Accuracy", {"train": train_acc, "val": val_acc}, epoch)
+
+        print(f"Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
+
+        if val_acc > best_acc and cfg["save_best"]:
+            torch.save(model.state_dict(), os.path.join(cfg["save_dir"], "best_model.pth"))
             best_acc = val_acc
-            torch.save({'model_state_dict': model.state_dict(), 'epoch': epoch, 'val_acc': val_acc}, args.out)
-            print("Saved checkpoint")
+
+    writer.close()
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
+    cfg = load_config(args.config)
+    main(cfg)
