@@ -1,32 +1,57 @@
 # models/segmentation.py
-import torch.nn as nn
 import torch
-from collections import OrderedDict
-from models.backbones import create_timm_features_backbone
+import torch.nn as nn
 import torch.nn.functional as F
+from timm import create_model
 
-class SimpleSegmentationModel(nn.Module):
-    def __init__(self, encoder_name='mit_b2', pretrained=True, encoder_out_index=-1, num_classes=21):
+class SegmentationHead(nn.Module):
+    """
+    Simple decoder head for segmentation.
+    Uses a few ConvTranspose2d layers to upsample feature maps.
+    """
+    def __init__(self, in_channels, num_classes, decoder_channels=256):
         super().__init__()
-        # encoder returns list -> take last feature as bottleneck
-        self.encoder = create_timm_features_backbone(name=encoder_name, pretrained=pretrained, out_indices=(encoder_out_index,))
-        # try to get channels
-        channels = self.encoder.model.feature_info.channels() if hasattr(self.encoder.model, "feature_info") else None
-        if channels is None:
-            raise RuntimeError("Encoder must expose channels via feature_info")
-        in_channels = channels[encoder_out_index]
-        self.decode_head = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels//2, kernel_size=3, padding=1),
-            nn.BatchNorm2d(in_channels//2),
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(in_channels, decoder_channels, kernel_size=2, stride=2),
+            nn.BatchNorm2d(decoder_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels//2, num_classes, kernel_size=1)
+
+            nn.ConvTranspose2d(decoder_channels, decoder_channels // 2, kernel_size=2, stride=2),
+            nn.BatchNorm2d(decoder_channels // 2),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(decoder_channels // 2, num_classes, kernel_size=1)
         )
 
     def forward(self, x):
+        return self.decoder(x)
+
+
+class ViTSegmentationModel(nn.Module):
+    """
+    Segmentation model with a timm backbone and a simple decoder head.
+    Works for both CNN and ViT backbones.
+    """
+    def __init__(self, backbone_name="vit_base_patch16_224", num_classes=21, pretrained=True):
+        super().__init__()
+        # Load backbone (timm model)
+        self.encoder = create_model(backbone_name, features_only=True, pretrained=pretrained)
+        encoder_channels = self.encoder.feature_info[-1]['num_chs']
+
+        # Decoder / Segmentation head
+        self.seg_head = SegmentationHead(encoder_channels, num_classes)
+
+    def forward(self, x):
         feats = self.encoder(x)
-        # feats is OrderedDict; take last
-        last_feat = list(feats.values())[-1]
-        logits = self.decode_head(last_feat)
-        # upsample to input size
-        logits = F.interpolate(logits, size=x.shape[-2:], mode='bilinear', align_corners=False)
-        return logits
+        x = feats[-1]  # Use final feature map
+        x = self.seg_head(x)
+        # Resize logits to match input image size
+        x = F.interpolate(x, size=(feats[0].shape[2]*16, feats[0].shape[3]*16), mode="bilinear", align_corners=False)
+        return x
+
+
+def build_segmentation_model(timm_name="vit_base_patch16_224", num_classes=21, pretrained=True):
+    """
+    Factory function to build a segmentation model.
+    """
+    return ViTSegmentationModel(backbone_name=timm_name, num_classes=num_classes, pretrained=pretrained)
