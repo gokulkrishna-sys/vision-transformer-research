@@ -1,0 +1,31 @@
+# configs/cls_vit_base.yaml
+
+task: classification
+experiment_name: vit_base_cls
+
+# Dataset
+train_dir: ./data/imagenet/train
+val_dir: ./data/imagenet/val
+img_size: 224
+num_classes: 1000
+
+# Model
+backbone: vit_base_patch16_224
+pretrained: true
+dropout: 0.1
+pool: avg
+
+# Training
+batch_size: 32
+epochs: 50
+lr: 3e-4
+weight_decay: 1e-4
+optimizer: adamw
+scheduler: cosine
+fp16: true
+device: cuda
+
+# Logging & Checkpoint
+save_dir: ./experiments/cls_vit_base/
+save_best: true
+log_interval: 50
