@@ -1,28 +1,41 @@
 # train/train_detection.py
+import argparse
+import yaml
 import torch
 from torch.utils.data import DataLoader
+from datasets.detection_dataset import DetectionDataset
 from models.detection import build_faster_rcnn
-from datasets.detection_dataset import DetectionDataset  
-from tqdm import tqdm
 import torch.optim as optim
+from tqdm import tqdm
 
 def collate_fn(batch):
     imgs, targets = list(zip(*batch))
     return list(imgs), list(targets)
 
-def train_detection(train_dataset, val_dataset, timm_name='resnet50', num_classes=91, device='cuda', epochs=12, batch=4):
-    train_loader = DataLoader(train_dataset, batch_size=batch, shuffle=True, collate_fn=collate_fn, num_workers=8)
-    val_loader = DataLoader(val_dataset, batch_size=batch, shuffle=False, collate_fn=collate_fn, num_workers=8)
+def load_config(path):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
-    model = build_faster_rcnn(timm_name=timm_name, num_classes=num_classes, pretrained_backbone=True)
+def train_detection(cfg):
+    device = torch.device(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+
+    train_dataset = DetectionDataset(cfg["train_images"], cfg["train_annotations"])
+    val_dataset = DetectionDataset(cfg["val_images"], cfg["val_annotations"])
+
+    train_loader = DataLoader(train_dataset, batch_size=cfg["batch_size"], shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=cfg["batch_size"], shuffle=False, collate_fn=collate_fn)
+
+    model = build_faster_rcnn(timm_name=cfg["timm_model"], num_classes=cfg["num_classes"], pretrained_backbone=True)
     model.to(device)
+
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
+    optimizer = optim.SGD(params, lr=cfg["lr"], momentum=0.9, weight_decay=0.0005)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.1)
 
-    for epoch in range(epochs):
+    for epoch in range(cfg["epochs"]):
         model.train()
-        for images, targets in tqdm(train_loader):
+        total_loss = 0
+        for images, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg['epochs']}"):
             images = [img.to(device) for img in images]
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
             loss_dict = model(images, targets)
@@ -30,6 +43,13 @@ def train_detection(train_dataset, val_dataset, timm_name='resnet50', num_classe
             optimizer.zero_grad()
             losses.backward()
             optimizer.step()
+            total_loss += losses.item()
         lr_scheduler.step()
-        print(f"Epoch {epoch} done")
-        # Evaluation: run model in eval mode, accumulate mAP via COCO API or custom metric
+        print(f"Epoch {epoch+1}: Avg Loss = {total_loss/len(train_loader):.4f}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    args = parser.parse_args()
+    cfg = load_config(args.config)
+    train_detection(cfg)
